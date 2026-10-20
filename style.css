@@ -47,3 +47,4 @@ button:disabled{background:#2a3442;color:#667;opacity:.8}
 .mk.ping.jam .dot{background:#555;animation:none;border-style:dashed}
 @keyframes pulse{0%{box-shadow:0 0 0 0 #ff1744aa}100%{box-shadow:0 0 0 30px #ff174400}}
 .leaflet-container{background:#0a0d12}
+#overlay p{white-space:pre-line;line-height:1.6;max-width:420px}

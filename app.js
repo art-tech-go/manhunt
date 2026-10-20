@@ -20,7 +20,7 @@ const FAST = Q.has("fast"); // ?fast : dispersion de 20 s au lieu de 5 min
 const C = {
   SPEED_LIMIT_KMH: 25, SPEED_GRACE_MS: 8000, SPEED_COUNTDOWN: 20,
   ZONE_COUNTDOWN: 30, DISPERSION_MS: FAST ? 20000 : 300000,
-  CAPTURE_M: 15, BONUS_M: 20, JAM_MS: 4 * 60000, PUSH_MS: 3000, FRESH_MS: 30000
+  CAPTURE_M: 20, BONUS_M: 20, JAM_MS: 4 * 60000, PUSH_MS: 3000, FRESH_MS: 30000
 };
 
 const db = getDatabase(initializeApp(firebaseConfig));
@@ -242,10 +242,17 @@ function route() {
     if (game.state === "ended") {
       const won = (game.winner === "chasseurs") === (myRole === "chasseur");
       overlay(game.winner === "chasseurs" ? "LES CHASSEURS GAGNENT" : game.winner === "proies" ? "LA PROIE S'EST ÉCHAPPÉE" : "PARTIE ANNULÉE",
-        game.winner === "annulée" ? "Pas assez de joueurs" : won ? "🏆 Victoire" : "Défaite", "", "Quitter", leave);
+        game.winner === "annulée" ? "Pas assez de joueurs" : (won ? "🏆 Victoire" : "Défaite") + "\n\n" + summary(), "", "Quitter", leave);
     }
   }
   checkEnd(); draw();
+}
+// Récapitulatif de fin de partie : qui a été capturé par qui, éliminations, survivants
+function summary() {
+  const arr = Object.values(players), out = [];
+  arr.filter(p => p.role === "proie").forEach(p => out.push(p.alive === false ? `🎯 ${p.name} (proie) : ${p.reason || "éliminé"}` : `🎯 ${p.name} (proie) : a survécu`));
+  arr.filter(p => p.role === "chasseur" && p.alive === false).forEach(p => out.push(`🔫 ${p.name} : ${p.reason || "éliminé"}`));
+  return out.join("\n");
 }
 function endGame(winner) { if (game && game.state === "hunt") update(gameRef(), { state: "ended", winner }); }
 function checkEnd() {
@@ -267,6 +274,9 @@ async function assignRoles() {
 
 /* ---------- Actions : capture, brouillage, proximité ---------- */
 const fresh = p => p.lat && now() - p.ts < C.FRESH_MS;
+// Distance "effective" : on retire la marge d'erreur GPS cumulée des deux téléphones (max 20 m)
+// pour que deux joueurs côte à côte soient bien détectés malgré l'imprécision.
+const effDist = p => Math.max(0, dist(pos, p) - Math.min(((pos.acc || 0) + (p.acc || 0)) / 2, 20));
 let captureTarget = null;
 function proximity() {
   if (!game || game.state !== "hunt" || !pos || eliminated) return;
@@ -278,14 +288,14 @@ function proximity() {
     captureTarget = null; let best = Infinity;
     for (const [id, p] of Object.entries(players)) {
       if (p.role !== "proie" || p.alive === false || !fresh(p)) continue;
-      const d = dist(pos, p); if (d < best) { best = d; captureTarget = id; }
+      const d = effDist(p); if (d < best) { best = d; captureTarget = id; }
     }
     const ok = best <= C.CAPTURE_M; $("btnCapture").disabled = !ok;
-    $("btnCapture").textContent = ok ? "🔴 CAPTURER" : "CAPTURER (cible hors de portée)";
+    $("btnCapture").textContent = ok ? "🔴 CAPTURER" : best <= 60 ? "CAPTURER (cible proche…)" : "CAPTURER (cible hors de portée)";
   } else if (myRole === "proie") {
     if (!me.bonus && !(me.jamUntil > n)) {
       for (const p of Object.values(players))
-        if (p.role === "chasseur" && p.alive !== false && fresh(p) && dist(pos, p) <= C.BONUS_M) {
+        if (p.role === "chasseur" && p.alive !== false && fresh(p) && effDist(p) <= C.BONUS_M) {
           update(ref(db, `games/${code}/players/${uid}`), { bonus: true }); toast("⚡ Capacité débloquée : BROUILLAGE GPS"); beep(1000, .15, 2); break;
         }
     }
@@ -295,7 +305,8 @@ function proximity() {
   }
 }
 $("btnCapture").onclick = () => {
-  if (captureTarget) update(ref(db, `games/${code}/players/${captureTarget}`), { alive: false, reason: "Capturé par " + players[uid].name });
+  const t = captureTarget && players[captureTarget];
+  if (t && t.alive !== false && fresh(t) && effDist(t) <= C.CAPTURE_M + 5) update(ref(db, `games/${code}/players/${captureTarget}`), { alive: false, reason: "Capturé par " + players[uid].name });
 };
 $("btnJam").onclick = () => update(ref(db, `games/${code}/players/${uid}`), { bonus: false, jamUntil: now() + C.JAM_MS, jamPos: { lat: pos.lat, lng: pos.lng } });
 
@@ -303,7 +314,7 @@ $("btnJam").onclick = () => update(ref(db, `games/${code}/players/${uid}`), { bo
 function publish() {
   if (!game || game.state !== "hunt" || !pos || eliminated || !myRole) return;
   const n = now(), u = {};
-  if (n - lastPush >= C.PUSH_MS) { u[`players/${uid}/lat`] = pos.lat; u[`players/${uid}/lng`] = pos.lng; u[`players/${uid}/ts`] = n; lastPush = n; }
+  if (n - lastPush >= C.PUSH_MS) { u[`players/${uid}/lat`] = pos.lat; u[`players/${uid}/lng`] = pos.lng; u[`players/${uid}/ts`] = n; u[`players/${uid}/acc`] = Math.round(pos.acc || 0); lastPush = n; }
   const me = players[uid] || {};
   // Position "affichée" : publiée pour tous à intervalle régulier ; figée pendant le brouillage de la proie
   if (!(myRole === "proie" && me.jamUntil > n) && n - lastPing >= game.pingMin * 60000) {
