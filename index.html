@@ -34,6 +34,7 @@
     </div>
     <div class="row">
       <label>Dispersion (min)<input id="dispersion" type="number" min="0.5" step="0.5" value="5"></label>
+      <label>Perte de signal max (s, 0 = off)<input id="lostSec" type="number" min="0" step="10" value="90"></label>
     </div>
     <button id="btnCreate" class="red">CRÉER (zone centrée sur moi)</button>
   </div>
@@ -57,6 +58,7 @@
   <div id="hud">
     <div><small id="phase">PHASE</small><strong id="timer">--:--</strong></div>
     <div><small>RÔLE</small><strong id="role">—</strong></div>
+    <div><small>PING</small><strong id="ping">--:--</strong></div>
     <div><small>VITESSE</small><strong id="speed">0</strong></div>
   </div>
   <div id="banner" class="hidden"></div>
