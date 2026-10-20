@@ -1,11 +1,10 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getDatabase, ref, set, update, get, onValue } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
-/* ====== 1. COLLE ICI TA CONFIG FIREBASE (voir instructions) ====== */
+
 const firebaseConfig = {
   apiKey: "AIzaSyDlbO2DM_mTjSaCFLU75jHUZbB_dpbtqGc",
   authDomain: "urban-hunt-game.firebaseapp.com",
-  // ⚠️ À vérifier : copie l'URL exacte affichée en haut de Realtime Database dans la console
   databaseURL: "https://urban-hunt-game-default-rtdb.europe-west1.firebasedatabase.app",
   projectId: "urban-hunt-game",
   storageBucket: "urban-hunt-game.firebasestorage.app",
@@ -18,7 +17,7 @@ const Q = new URLSearchParams(location.search);
 const SIM = Q.has("sim");   // ?sim  : clic sur la carte = déplacement (test sur PC)
 const FAST = Q.has("fast"); // ?fast : dispersion de 20 s au lieu de 5 min
 const C = {
-  SPEED_LIMIT_KMH: 25, SPEED_GRACE_MS: 8000, SPEED_COUNTDOWN: 20,
+  SPEED_LIMIT_KMH: 70, SPEED_GRACE_MS: 8000, SPEED_COUNTDOWN: 60,
   ZONE_COUNTDOWN: 30, DISPERSION_MS: FAST ? 20000 : 300000,
   CAPTURE_M: 15, BONUS_M: 20, JAM_MS: 4 * 60000, PUSH_MS: 3000, FRESH_MS: 30000
 };
