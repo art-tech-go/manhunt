@@ -18,7 +18,7 @@ const SIM = Q.has("sim");   // ?sim  : clic sur la carte = déplacement (test su
 const FAST = Q.has("fast"); // ?fast : dispersion de 20 s au lieu de 5 min
 const C = {
   SPEED_LIMIT_KMH: 70, SPEED_GRACE_MS: 8000, SPEED_COUNTDOWN: 60,
-  ZONE_COUNTDOWN: 30, DISPERSION_MS: FAST ? 20000 : 300000,
+  ZONE_COUNTDOWN: 30, DISPERSION_MS: FAST ? 2000 : 3000,
   CAPTURE_M: 15, BONUS_M: 20, JAM_MS: 4 * 60000, PUSH_MS: 3000, FRESH_MS: 30000
 };
 
