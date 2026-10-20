@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a0d12">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<title>MANHUNT</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="map"></div>
+
+<!-- ACCUEIL -->
+<section id="home" class="screen">
+  <h1>MAN<span>HUNT</span></h1>
+  <p class="sub">Traque urbaine grandeur nature</p>
+  <input id="name" maxlength="14" placeholder="Ton pseudo" autocomplete="off">
+  <div class="card">
+    <h3>Rejoindre</h3>
+    <input id="joinCode" maxlength="6" placeholder="CODE" autocapitalize="characters" autocomplete="off">
+    <button id="btnJoin">REJOINDRE</button>
+  </div>
+  <div class="card">
+    <h3>Créer une partie</h3>
+    <label>Rayon de la zone : <b id="rLabel">800 m</b></label>
+    <input id="radius" type="range" min="200" max="3000" step="100" value="800">
+    <div class="row">
+      <label>Durée (min)<input id="duration" type="number" min="5" value="45"></label>
+      <label>Rafraîch. positions (min)<input id="pingMin" type="number" min="0.5" step="0.5" value="3"></label>
+      <label>Proies<select id="preys"><option>1</option><option>2</option></select></label>
+    </div>
+    <button id="btnCreate" class="red">CRÉER (zone centrée sur moi)</button>
+  </div>
+  <p id="gps" class="small">📡 GPS : en attente…</p>
+</section>
+
+<!-- LOBBY -->
+<section id="lobby" class="screen hidden">
+  <p class="sub">CODE DE LA PARTIE</p>
+  <div id="codeBig"></div>
+  <button id="btnShare" class="ghost">Partager</button>
+  <p class="small" id="lobbyInfo"></p>
+  <ul id="plist"></ul>
+  <button id="btnStart" class="red hidden">LANCER LA PARTIE</button>
+  <p id="waitHost" class="small">En attente de l'hôte…</p>
+  <button id="btnQuit" class="ghost">Quitter</button>
+</section>
+
+<!-- JEU -->
+<section id="game" class="screen overlay-pass hidden">
+  <div id="hud">
+    <div><small id="phase">PHASE</small><strong id="timer">--:--</strong></div>
+    <div><small>RÔLE</small><strong id="role">—</strong></div>
+    <div><small>VITESSE</small><strong id="speed">0</strong></div>
+  </div>
+  <div id="banner" class="hidden"></div>
+  <button id="recenter">🎯</button>
+  <div id="actions">
+    <button id="btnCapture" class="red hidden" disabled>CAPTURER</button>
+    <button id="btnJam" class="hidden" disabled>🔒 BROUILLAGE GPS</button>
+  </div>
+  <div id="toast" class="hidden"></div>
+</section>
+
+<!-- OVERLAY PLEIN ÉCRAN -->
+<div id="overlay" class="hidden"><h2 id="ovTitle"></h2><p id="ovSub"></p><button id="ovBtn">OK</button></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
