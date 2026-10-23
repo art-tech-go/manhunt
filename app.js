@@ -40,7 +40,7 @@ const now = () => Date.now() + offset;
 onValue(ref(db, ".info/serverTimeOffset"), s => offset = s.val() || 0);
 
 /* ---------- Carte ---------- */
-const map = L.map("map", { zoomControl: false, attributionControl: false, maxZoom: 31, zoomSnap: 0.5, zoomDelta: 0.5 }).setView([48.8426, 2.5033], 16);
+const map = L.map("map", { zoomControl: false, attributionControl: false, maxZoom: 51, zoomSnap: 0.5, zoomDelta: 0.5 }).setView([48.8426, 2.5033], 16);
 L.control.attribution({ prefix: false, position: "bottomleft" }).addTo(map);
 const CARTO_KEY = "cb1_4pbh_1_eedd6ef45052e29b67a035ce";
 L.tileLayer(`https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png?key=${CARTO_KEY}`, {
