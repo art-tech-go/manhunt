@@ -32,6 +32,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;",
 let offset = 0, code = null, game = null, players = {}, myRole = null, unsub = null;
 let pos = null, speedKmh = 0, follow = true, shownRole = null, assigning = false;
 let jamFlushed = 0, lastPush = 0, lastPing = -1, zoneEnd = null, speedOverSince = null, speedEnd = null, eliminated = false;
+let photos = {}, unsubPhotos = null;
 let zoneKey = "", zoneLayers = [], lastSnap = 0, online = true;
 onValue(ref(db, ".info/connected"), s => online = !!s.val());
 const gameRef = () => ref(db, `games/${code}`);
@@ -50,16 +51,21 @@ map.on("dragstart", () => follow = false);
 $("recenter").onclick = () => { follow = true; if (pos) map.setView([pos.lat, pos.lng], 17); };
 
 const markers = {}; let keep = new Set();
-function mk(id, p, cls, label) {
+function mk(id, p, cls, label, photo) {
   keep.add(id);
-  const icon = () => L.divIcon({ className: "mk " + cls, html: `<div class="dot"></div><b>${esc(label)}</b>`, iconSize: [0, 0] });
+  const icon = () => L.divIcon({
+    className: "mk " + cls,
+    html: `<div class="dot${photo ? " ph" : ""}"${photo ? ` style="background-image:url(${photo})"` : ""}></div><b>${esc(label)}</b>`,
+    iconSize: [0, 0]
+  });
+  const key = cls + label + (photo ? 1 : 0);
   let m = markers[id];
-  if (!m) { m = markers[id] = L.marker([p.lat, p.lng], { icon: icon(), interactive: false }).addTo(map); m._k = cls + label; }
-  else { m.setLatLng([p.lat, p.lng]); if (m._k !== cls + label) { m.setIcon(icon()); m._k = cls + label; } }
+  if (!m) { m = markers[id] = L.marker([p.lat, p.lng], { icon: icon(), interactive: false }).addTo(map); m._k = key; }
+  else { m.setLatLng([p.lat, p.lng]); if (m._k !== key) { m.setIcon(icon()); m._k = key; } }
 }
 function draw() {
   keep = new Set();
-  if (pos) mk("me", pos, "me", "");
+  if (pos) mk("me", pos, "me", "", store.photo);
   if (game && game.state === "hunt") {
     for (const [id, p] of Object.entries(players)) {
       if (id === uid || p.alive === false) continue;
@@ -67,7 +73,7 @@ function draw() {
       const jam = p.role === "proie" && p.jamUntil > now();
       const age = Math.round((now() - p.ping.ts) / 60000);
       const cls = p.role === "chasseur" ? "hunter" : "ping" + (jam ? " jam" : "");
-      mk(id, p.ping, cls, jam ? "BROUILLÉ" : `${p.name} · ${age} min`);
+      mk(id, p.ping, cls, jam ? "BROUILLÉ" : `${p.name} · ${age} min`, photos[id]);
     }
   }
   for (const id in markers) if (!keep.has(id)) { map.removeLayer(markers[id]); delete markers[id]; }
@@ -110,9 +116,11 @@ function beep(freq = 880, dur = .15, n = 1) {
   } catch (e) {}
   navigator.vibrate && navigator.vibrate(n > 1 ? [200, 100, 200, 100, 200] : 200);
 }
-function overlay(title, sub, cls = "", btn = "OK", onclick) {
+function overlay(title, sub, cls = "", btn = "OK", onclick, btn2, onclick2) {
   const o = $("overlay"); o.className = cls; $("ovTitle").textContent = title; $("ovSub").textContent = sub;
   $("ovBtn").textContent = btn; $("ovBtn").onclick = () => { o.className = "hidden"; onclick && onclick(); };
+  const b2 = $("ovBtn2"); b2.classList.toggle("hidden", !btn2);
+  if (btn2) { b2.textContent = btn2; b2.onclick = () => { o.className = "hidden"; onclick2 && onclick2(); }; }
 }
 function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.remove("hidden"); setTimeout(() => t.classList.add("hidden"), 4000); }
 
@@ -166,6 +174,32 @@ function eliminate(reason) {
   overlay("ÉLIMINÉ", reason, "elim", "Quitter", leave);
 }
 
+/* ---------- Photo de profil (miniature 96 px stockée dans la base, sans Storage) ---------- */
+async function resizePhoto(file) {
+  const img = new Image(); img.src = URL.createObjectURL(file); await img.decode();
+  const S = 96, c = document.createElement("canvas"); c.width = c.height = S;
+  const m = Math.min(img.width, img.height);
+  c.getContext("2d").drawImage(img, (img.width - m) / 2, (img.height - m) / 2, m, m, 0, 0, S, S);
+  URL.revokeObjectURL(img.src);
+  return c.toDataURL("image/jpeg", .7);
+}
+function takePhoto() {
+  const i = document.createElement("input"); i.type = "file"; i.accept = "image/*"; i.setAttribute("capture", "user");
+  i.onchange = async () => {
+    if (!i.files[0]) return;
+    store.photo = await resizePhoto(i.files[0]); updateAvatar();
+    if (code) set(ref(db, `games/${code}_photos/${uid}`), store.photo);
+  };
+  i.click();
+}
+function updateAvatar() {
+  const bg = store.photo ? `url(${store.photo})` : "none";
+  $("avatar").style.backgroundImage = bg; $("avatar2").style.backgroundImage = bg;
+  $("btnPhoto").textContent = store.photo ? "📷 Changer ma photo" : "📷 Prendre ma photo (obligatoire)";
+}
+$("btnPhoto").onclick = takePhoto; $("btnPhoto2").onclick = takePhoto;
+updateAvatar();
+
 /* ---------- Lobby / création / rejoindre ---------- */
 const genCode = () => Array.from({ length: 5 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ"[Math.random() * 24 | 0]).join("");
 const pseudo = () => $("name").value.trim().slice(0, 14);
@@ -174,6 +208,7 @@ $("name").value = store.name || "";
 
 $("btnCreate").onclick = async () => {
   if (!pseudo()) return alert("Choisis un pseudo");
+  if (!store.photo) return alert("Prends d'abord une photo de profil");
   if (!pos && !SIM) return alert("Attends que le GPS soit prêt (zone centrée sur ta position)");
   const center = pos ? { lat: pos.lat, lng: pos.lng } : { lat: 48.8426, lng: 2.5033 };
   code = genCode();
@@ -185,6 +220,7 @@ $("btnCreate").onclick = async () => {
 };
 $("btnJoin").onclick = async () => {
   if (!pseudo()) return alert("Choisis un pseudo");
+  if (!store.photo) return alert("Prends d'abord une photo de profil");
   code = $("joinCode").value.trim().toUpperCase();
   const s = await get(gameRef());
   if (!s.exists()) { code = null; return alert("Code inconnu"); }
@@ -196,15 +232,18 @@ async function enter() {
   store.name = pseudo(); store.code = code;
   const exists = (await get(ref(db, `games/${code}/players/${uid}`))).exists();
   if (!exists) await set(ref(db, `games/${code}/players/${uid}`), { name: pseudo(), alive: true });
+  // Photos stockées à part (games/CODE_photos : couvert par la règle "$code" existante) pour ne pas alourdir les mises à jour
+  if (store.photo) set(ref(db, `games/${code}_photos/${uid}`), store.photo);
+  unsubPhotos = onValue(ref(db, `games/${code}_photos`), s => { photos = s.val() || {}; if (game) { renderLobby(); renderLegend(); draw(); } });
   unsub = onValue(gameRef(), s => { lastSnap = Date.now(); game = s.val(); if (!game) return leave(); route(); });
 }
 function leave() {
-  unsub && unsub(); unsub = null; code = null; game = null; players = {}; myRole = null; shownRole = null;
+  unsub && unsub(); unsub = null; unsubPhotos && unsubPhotos(); unsubPhotos = null; photos = {}; code = null; game = null; players = {}; myRole = null; shownRole = null;
   eliminated = false; zoneEnd = speedEnd = speedOverSince = null; assigning = false; zoneKey = "";
   delete store.code; zoneLayers.forEach(l => map.removeLayer(l)); zoneLayers = [];
   $("overlay").className = "hidden"; show("home"); draw();
 }
-$("btnQuit").onclick = async () => { if (code) await set(ref(db, `games/${code}/players/${uid}`), null); leave(); };
+$("btnQuit").onclick = async () => { if (code) { await set(ref(db, `games/${code}/players/${uid}`), null); await set(ref(db, `games/${code}_photos/${uid}`), null); } leave(); };
 $("btnShare").onclick = () => {
   const txt = `Rejoins ma traque MANHUNT ! Code : ${code} — ${location.origin}${location.pathname}`;
   navigator.share ? navigator.share({ text: txt }) : navigator.clipboard.writeText(txt).then(() => toast("Lien copié"));
@@ -212,6 +251,48 @@ $("btnShare").onclick = () => {
 $("btnStart").onclick = () => update(gameRef(), { state: "dispersion", phaseEnd: now() + (FAST ? C.DISPERSION_MS : (game.dispersionMin || 5) * 60000) });
 
 /* ---------- Routage selon l'état de la partie ---------- */
+function resetLocal() { // remise à zéro locale (nouvelle partie / revanche)
+  eliminated = false; shownRole = null; assigning = false; zoneEnd = speedEnd = speedOverSince = null;
+  lastPing = -1; lastPush = 0; jamFlushed = 0; $("banner").classList.add("hidden");
+}
+function renderLobby() {
+  if (!game || game.state !== "lobby") return;
+  $("codeBig").textContent = code;
+  $("lobbyInfo").textContent = `Zone ${game.radius} m · dispersion ${game.dispersionMin || 5} min · traque ${game.durationMin} min · positions toutes les ${game.pingMin} min · ${game.preys} proie(s)`;
+  const ul = $("plist"); ul.innerHTML = "";
+  Object.entries(players).forEach(([id, p]) => {
+    const li = document.createElement("li"), av = document.createElement("span"); av.className = "lav";
+    if (photos[id]) av.style.backgroundImage = `url(${photos[id]})`;
+    li.append(av, document.createTextNode(p.name + (id === game.host ? " 👑" : ""))); ul.appendChild(li);
+  });
+  const isHost = game.host === uid;
+  $("btnStart").classList.toggle("hidden", !isHost); $("waitHost").classList.toggle("hidden", isHost);
+  $("btnStart").disabled = Object.keys(players).length < 2;
+}
+// Légende : qui est proie / chasseur (visible pendant la traque)
+function renderLegend() {
+  const on = game && ["hunt"].includes(game.state);
+  $("legend").classList.toggle("hidden", !on); if (!on) return;
+  const list = $("legendList"); list.innerHTML = "";
+  Object.entries(players).sort((a, b) => (a[1].role === "proie" ? 0 : 1) - (b[1].role === "proie" ? 0 : 1)).forEach(([id, p]) => {
+    const row = document.createElement("div"), av = document.createElement("span"), t = document.createElement("small");
+    row.className = "lrow " + (p.role === "proie" ? "prey" : "hunter") + (p.alive === false ? " dead" : "");
+    av.className = "lav"; if (photos[id]) av.style.backgroundImage = `url(${photos[id]})`;
+    t.textContent = (p.role === "proie" ? "PROIE" : "CHASSEUR") + (id === uid ? " (toi)" : "");
+    row.append(av, document.createTextNode(p.name + " "), t); list.appendChild(row);
+  });
+}
+$("legendBtn").onclick = () => $("legendList").classList.toggle("hidden");
+// Revanche : même joueurs, même réglages, tout le monde repasse au lobby
+function rematch() {
+  const u = { state: "lobby", winner: null, huntEnd: null, phaseEnd: null };
+  if (!players[game.host]) u.host = uid;
+  for (const id in players) {
+    for (const k of ["role", "reason", "lat", "lng", "ts", "acc", "ping", "jamUntil", "jamPos", "bonus", "jamsUsed"]) u[`players/${id}/${k}`] = null;
+    u[`players/${id}/alive`] = true;
+  }
+  update(gameRef(), u);
+}
 function route() {
   players = game.players || {};
   const me = players[uid];
@@ -219,13 +300,7 @@ function route() {
   myRole = me.role || null;
   drawZone();
   if (game.state === "lobby") {
-    show("lobby"); $("codeBig").textContent = code;
-    $("lobbyInfo").textContent = `Zone ${game.radius} m · dispersion ${game.dispersionMin || 5} min · traque ${game.durationMin} min · ping proie ${game.pingMin} min · ${game.preys} proie(s)`;
-    const ul = $("plist"); ul.innerHTML = "";
-    Object.values(players).forEach(p => { const li = document.createElement("li"); li.textContent = p.name + (p === players[game.host] ? " 👑" : ""); ul.appendChild(li); });
-    const isHost = game.host === uid;
-    $("btnStart").classList.toggle("hidden", !isHost); $("waitHost").classList.toggle("hidden", isHost);
-    $("btnStart").disabled = Object.keys(players).length < 2;
+    show("lobby"); $("overlay").className = "hidden"; resetLocal(); renderLobby();
   } else {
     show("game");
     if (game.state === "dispersion") { $("phase").textContent = "DISPERSION"; $("role").textContent = "???"; $("ping").textContent = "--:--"; }
@@ -243,10 +318,10 @@ function route() {
     if (game.state === "ended") {
       const won = (game.winner === "chasseurs") === (myRole === "chasseur");
       overlay(game.winner === "chasseurs" ? "LES CHASSEURS GAGNENT" : game.winner === "proies" ? "LA PROIE S'EST ÉCHAPPÉE" : "PARTIE ANNULÉE",
-        game.winner === "annulée" ? "Pas assez de joueurs" : (won ? "🏆 Victoire" : "Défaite") + "\n\n" + summary(), "", "Quitter", leave);
+        game.winner === "annulée" ? "Pas assez de joueurs" : (won ? "🏆 Victoire" : "Défaite") + "\n\n" + summary(), "", "Quitter", leave, "🔁 REJOUER (mêmes joueurs)", rematch);
     }
   }
-  checkEnd(); draw();
+  checkEnd(); renderLegend(); draw();
 }
 // Récapitulatif de fin de partie : qui a été capturé par qui, éliminations, survivants
 function summary() {

@@ -18,6 +18,7 @@
   <h1>MAN<span>HUNT</span></h1>
   <p class="sub">Traque urbaine grandeur nature</p>
   <input id="name" maxlength="14" placeholder="Ton pseudo" autocomplete="off">
+  <div class="avatarBox"><div id="avatar" class="avatar"></div><button id="btnPhoto" class="ghost">📷 Prendre ma photo</button></div>
   <div class="card">
     <h3>Rejoindre</h3>
     <input id="joinCode" maxlength="6" placeholder="CODE" autocapitalize="characters" autocomplete="off">
@@ -47,6 +48,7 @@
   <div id="codeBig"></div>
   <button id="btnShare" class="ghost">Partager</button>
   <p class="small" id="lobbyInfo"></p>
+  <div class="avatarBox"><div id="avatar2" class="avatar"></div><button id="btnPhoto2" class="ghost">📷 Changer ma photo</button></div>
   <ul id="plist"></ul>
   <button id="btnStart" class="red hidden">LANCER LA PARTIE</button>
   <p id="waitHost" class="small">En attente de l'hôte…</p>
@@ -63,6 +65,7 @@
   </div>
   <div id="banner" class="hidden"></div>
   <button id="recenter">🎯</button>
+  <div id="legend" class="hidden"><button id="legendBtn">👥 Légende</button><div id="legendList" class="hidden"></div></div>
   <div id="actions">
     <button id="btnCapture" class="red hidden" disabled>CAPTURER</button>
     <button id="btnJam" class="hidden" disabled>🔒 BROUILLAGE GPS</button>
@@ -71,7 +74,7 @@
 </section>
 
 <!-- OVERLAY PLEIN ÉCRAN -->
-<div id="overlay" class="hidden"><h2 id="ovTitle"></h2><p id="ovSub"></p><button id="ovBtn">OK</button></div>
+<div id="overlay" class="hidden"><h2 id="ovTitle"></h2><p id="ovSub"></p><button id="ovBtn">OK</button><button id="ovBtn2" class="ghost hidden"></button></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script type="module" src="app.js"></script>
