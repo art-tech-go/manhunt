@@ -20,7 +20,7 @@ const FAST = Q.has("fast"); // ?fast : dispersion de 20 s au lieu de 5 min
 const C = {
   SPEED_LIMIT_KMH: 25, SPEED_GRACE_MS: 8000, SPEED_COUNTDOWN: 20,
   ZONE_COUNTDOWN: 30, DISPERSION_MS: FAST ? 20000 : 300000,
-  CAPTURE_M: 20, MAX_JAMS: 2, BONUS_M: 20, JAM_MS: 4 * 60000, PUSH_MS: 3000, FRESH_MS: 30000
+  CAPTURE_M: 20, COMPASS_MS: 10 * 60000, MAX_JAMS: 2, BONUS_M: 20, JAM_MS: 4 * 60000, PUSH_MS: 3000, FRESH_MS: 30000
 };
 
 const db = getDatabase(initializeApp(firebaseConfig));
@@ -40,15 +40,16 @@ const now = () => Date.now() + offset;
 onValue(ref(db, ".info/serverTimeOffset"), s => offset = s.val() || 0);
 
 /* ---------- Carte ---------- */
-const map = L.map("map", { zoomControl: false, attributionControl: false }).setView([48.8426, 2.5033], 16);
+const map = L.map("map", { zoomControl: false, attributionControl: false, maxZoom: 21, zoomSnap: 0.5, zoomDelta: 0.5 }).setView([48.8426, 2.5033], 16);
 L.control.attribution({ prefix: false, position: "bottomleft" }).addTo(map);
 const CARTO_KEY = "cb1_4pbh_1_eedd6ef45052e29b67a035ce";
 L.tileLayer(`https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png?key=${CARTO_KEY}`, {
-  maxZoom: 19,
+  maxZoom: 21, maxNativeZoom: 19, // au-delà de 19 les tuiles sont simplement agrandies
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>'
 }).addTo(map);
 map.on("dragstart", () => follow = false);
-$("recenter").onclick = () => { follow = true; if (pos) map.setView([pos.lat, pos.lng], 17); };
+let zoomInit = false, gpsHeading = null;
+$("recenter").onclick = () => { follow = true; if (pos) map.panTo([pos.lat, pos.lng]); };
 
 const markers = {}; let keep = new Set();
 function mk(id, p, cls, label, photo) {
@@ -134,7 +135,11 @@ function onPos(p) {
   pos = np;
   $("gps").textContent = `📡 GPS OK (±${Math.round(c.accuracy)} m)`;
   $("speed").textContent = Math.round(speedKmh) + " km/h";
-  if (follow && !$("game").classList.contains("hidden")) map.setView([pos.lat, pos.lng], Math.max(map.getZoom(), 16), { animate: true });
+  if (c.heading != null && !isNaN(c.heading)) gpsHeading = c.heading;
+  if (follow && !$("game").classList.contains("hidden")) {
+    // Zoom initial 18 une seule fois ; ensuite on garde le zoom choisi par le joueur (pincer / double-tap)
+    if (!zoomInit) { map.setView([pos.lat, pos.lng], 18); zoomInit = true; } else map.panTo([pos.lat, pos.lng], { animate: true });
+  }
   draw();
 }
 if (SIM) map.on("click", e => onPos({ coords: { latitude: e.latlng.lat, longitude: e.latlng.lng, accuracy: 5, speed: 0 } }));
@@ -239,7 +244,7 @@ async function enter() {
 }
 function leave() {
   unsub && unsub(); unsub = null; unsubPhotos && unsubPhotos(); unsubPhotos = null; photos = {}; code = null; game = null; players = {}; myRole = null; shownRole = null;
-  eliminated = false; zoneEnd = speedEnd = speedOverSince = null; assigning = false; zoneKey = "";
+  eliminated = false; zoneEnd = speedEnd = speedOverSince = null; assigning = false; zoneKey = ""; zoomInit = false; compassShown = false;
   delete store.code; zoneLayers.forEach(l => map.removeLayer(l)); zoneLayers = [];
   $("overlay").className = "hidden"; show("home"); draw();
 }
@@ -253,7 +258,7 @@ $("btnStart").onclick = () => update(gameRef(), { state: "dispersion", phaseEnd:
 /* ---------- Routage selon l'état de la partie ---------- */
 function resetLocal() { // remise à zéro locale (nouvelle partie / revanche)
   eliminated = false; shownRole = null; assigning = false; zoneEnd = speedEnd = speedOverSince = null;
-  lastPing = -1; lastPush = 0; jamFlushed = 0; $("banner").classList.add("hidden");
+  lastPing = -1; lastPush = 0; jamFlushed = 0; zoomInit = false; compassShown = false; $("banner").classList.add("hidden");
 }
 function renderLobby() {
   if (!game || game.state !== "lobby") return;
@@ -434,6 +439,50 @@ function checkLost() {
   }
 }
 
+/* ---------- Boussole (chasseurs, 10 dernières minutes) ---------- */
+let compassShown = false, heading = null, lastOrient = 0, lastCompassDraw = 0;
+function bearing(a, b) {
+  const t = Math.PI / 180, y = Math.sin((b.lng - a.lng) * t) * Math.cos(b.lat * t);
+  const x = Math.cos(a.lat * t) * Math.sin(b.lat * t) - Math.sin(a.lat * t) * Math.cos(b.lat * t) * Math.cos((b.lng - a.lng) * t);
+  return (Math.atan2(y, x) / t + 360) % 360;
+}
+function onOrient(e) {
+  let h = null;
+  if (e.webkitCompassHeading != null) h = e.webkitCompassHeading;          // iOS
+  else if (e.absolute && e.alpha != null) h = (360 - e.alpha) % 360;       // Android
+  if (h == null) return;
+  heading = (h + ((screen.orientation && screen.orientation.angle) || 0)) % 360; lastOrient = Date.now();
+  if (Date.now() - lastCompassDraw > 100) updateCompass();
+}
+function initCompass() { // iOS demande une autorisation après un clic
+  const listen = () => { addEventListener("deviceorientationabsolute", onOrient, true); addEventListener("deviceorientation", onOrient, true); };
+  if (typeof DeviceOrientationEvent !== "undefined" && DeviceOrientationEvent.requestPermission)
+    DeviceOrientationEvent.requestPermission().then(r => r === "granted" && listen()).catch(() => {});
+  else listen();
+}
+document.addEventListener("click", initCompass, { once: true });
+function curHeading() {
+  if (heading != null && Date.now() - lastOrient < 3000) return heading;
+  if (gpsHeading != null && speedKmh > 3) return gpsHeading;
+  return null;
+}
+function updateCompass() {
+  lastCompassDraw = Date.now();
+  const el = $("compass");
+  const on = game && game.state === "hunt" && myRole === "chasseur" && !eliminated && pos && game.huntEnd - now() <= C.COMPASS_MS;
+  let best = null, bd = Infinity;
+  if (on) for (const p of Object.values(players)) {
+    if (p.role !== "proie" || p.alive === false || !p.ping) continue;
+    const d = dist(pos, p.ping); if (d < bd) { bd = d; best = p.ping; }
+  }
+  if (!best) { el.classList.add("hidden"); return; }
+  if (!compassShown) { compassShown = true; toast("🧭 Boussole activée : elle pointe vers le dernier ping de la proie"); beep(660, .15, 2); }
+  el.classList.remove("hidden");
+  const h = curHeading();
+  $("compassArrow").style.transform = `rotate(${(bearing(pos, best) - (h || 0) + 360) % 360}deg)`;
+  $("compassTxt").textContent = (bd >= 1000 ? (bd / 1000).toFixed(1) + " km" : Math.round(bd / 10) * 10 + " m") + (h == null ? " · nord ↑" : "");
+}
+
 /* ---------- Boucle principale (1 s) ---------- */
 setInterval(() => {
   if (!game) return;
@@ -446,7 +495,7 @@ setInterval(() => {
     $("ping").textContent = fmt(huntStart() + (pingIdx(n) + 1) * game.pingMin * 60000 - n);
     if (r <= 0) endGame("proies");
   }
-  rules(); proximity(); publish(); checkLost(); draw();
+  rules(); proximity(); publish(); checkLost(); updateCompass(); draw();
 }, 1000);
 
 /* ---------- Démarrage ---------- */
