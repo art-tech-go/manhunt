@@ -16,7 +16,7 @@
 <!-- ACCUEIL -->
 <section id="home" class="screen">
   <h1>MAN<span>HUNT</span></h1>
-  <p class="sub">Traque urbaine grandeur nature V5</p>
+  <p class="sub">Traque urbaine grandeur nature</p>
   <input id="name" maxlength="14" placeholder="Ton pseudo" autocomplete="off">
   <div class="avatarBox"><div id="avatar" class="avatar"></div><button id="btnPhoto" class="ghost">📷 Prendre ma photo</button></div>
   <div class="card">
@@ -36,6 +36,10 @@
     <div class="row">
       <label>Dispersion (min)<input id="dispersion" type="number" min="0.5" step="0.5" value="5"></label>
       <label>Perte de signal max (s, 0 = off)<input id="lostSec" type="number" min="0" step="10" value="90"></label>
+    </div>
+    <div class="row">
+      <label>Brouillage (min)<input id="jamMin" type="number" min="0.5" step="0.5" value="4"></label>
+      <label>Super GPS (min)<input id="superMin" type="number" min="0.5" step="0.5" value="3"></label>
     </div>
     <button id="btnCreate" class="red">CRÉER (zone centrée sur moi)</button>
   </div>
@@ -66,11 +70,11 @@
   <div id="banner" class="hidden"></div>
   <button id="recenter">🎯</button>
   <div id="legend" class="hidden"><button id="legendBtn">👥 Légende</button><div id="legendList" class="hidden"></div></div>
-  <div id="compass" class="hidden"><div id="compassDial"><div id="compassArrow"><svg viewBox="0 0 24 24" width="40" height="40"><path d="M12 2 L19 21 L12 17 L5 21 Z" fill="#ff1744" stroke="#fff" stroke-width="1"/></svg></div></div><small id="compassTxt"></small></div>
   <div id="actions">
     <button id="btnCapture" class="red hidden" disabled>CAPTURER</button>
     <button id="btnJam" class="hidden" disabled>🔒 BROUILLAGE GPS</button>
   </div>
+  <div id="badge" class="hidden"></div>
   <div id="toast" class="hidden"></div>
 </section>
 

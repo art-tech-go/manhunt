@@ -1,11 +1,11 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getDatabase, ref, set, update, get, onValue } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+import { getDatabase, ref, set, update, get, onValue, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
-/* ====== 1. COLLE ICI TA CONFIG FIREBASE (voir instructions) ====== */
+/* ===== CONFIG FIREBASE ====== */
 const firebaseConfig = {
   apiKey: "AIzaSyDlbO2DM_mTjSaCFLU75jHUZbB_dpbtqGc",
   authDomain: "urban-hunt-game.firebaseapp.com",
-  // ⚠️ À vérifier : copie l'URL exacte affichée en haut de Realtime Database dans la console
+  // url bdd
   databaseURL: "https://urban-hunt-game-default-rtdb.europe-west1.firebasedatabase.app",
   projectId: "urban-hunt-game",
   storageBucket: "urban-hunt-game.firebasestorage.app",
@@ -20,7 +20,7 @@ const FAST = Q.has("fast"); // ?fast : dispersion de 20 s au lieu de 5 min
 const C = {
   SPEED_LIMIT_KMH: 25, SPEED_GRACE_MS: 8000, SPEED_COUNTDOWN: 20,
   ZONE_COUNTDOWN: 30, DISPERSION_MS: FAST ? 20000 : 300000,
-  CAPTURE_M: 20, COMPASS_MS: 10 * 60000, MAX_JAMS: 2, BONUS_M: 20, JAM_MS: 4 * 60000, PUSH_MS: 3000, FRESH_MS: 30000
+  CAPTURE_M: 20, DEGRESSIVE_MS: 5 * 60000, MIN_PING_MS: 15000, MAX_JAMS: 2, BONUS_M: 20, ITEM_M: 20, ITEM_MIN_M: 300, JAM_MS: 4 * 60000, PUSH_MS: 3000, FRESH_MS: 30000
 };
 
 const db = getDatabase(initializeApp(firebaseConfig));
@@ -40,7 +40,7 @@ const now = () => Date.now() + offset;
 onValue(ref(db, ".info/serverTimeOffset"), s => offset = s.val() || 0);
 
 /* ---------- Carte ---------- */
-const map = L.map("map", { zoomControl: false, attributionControl: false, maxZoom: 51, zoomSnap: 0.5, zoomDelta: 0.5 }).setView([48.8426, 2.5033], 16);
+const map = L.map("map", { zoomControl: false, attributionControl: false, maxZoom: 21, zoomSnap: 0.5, zoomDelta: 0.5 }).setView([48.8426, 2.5033], 16);
 L.control.attribution({ prefix: false, position: "bottomleft" }).addTo(map);
 const CARTO_KEY = "cb1_4pbh_1_eedd6ef45052e29b67a035ce";
 L.tileLayer(`https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png?key=${CARTO_KEY}`, {
@@ -48,7 +48,7 @@ L.tileLayer(`https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png?
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>'
 }).addTo(map);
 map.on("dragstart", () => follow = false);
-let zoomInit = false, gpsHeading = null;
+let zoomInit = false, lastSuper = 0, claiming = false;
 $("recenter").onclick = () => { follow = true; if (pos) map.panTo([pos.lat, pos.lng]); };
 
 const markers = {}; let keep = new Set();
@@ -70,13 +70,18 @@ function draw() {
   if (game && game.state === "hunt") {
     for (const [id, p] of Object.entries(players)) {
       if (id === uid || p.alive === false) continue;
-      if (!p.ping) continue; // position publiée à intervalle régulier (pour tous les joueurs)
       const jam = p.role === "proie" && p.jamUntil > now();
+      // SUPER GPS : les chasseurs voient la proie en direct (sauf si elle est brouillée)
+      if (p.role === "proie" && myRole === "chasseur" && superActive() && !jam && fresh(p)) { mk(id, p, "prey", `${p.name} · LIVE`, photos[id]); continue; }
+      if (!p.ping) continue; // position publiée à intervalle régulier (pour tous les joueurs)
       const age = Math.round((now() - p.ping.ts) / 60000);
       const cls = p.role === "chasseur" ? "hunter" : "ping" + (jam ? " jam" : "");
       mk(id, p.ping, cls, jam ? "BROUILLÉ" : `${p.name} · ${age} min`, photos[id]);
     }
   }
+  const kind = myRole === "proie" ? "prey" : myRole === "chasseur" ? "hunter" : null;
+  const it = game && game.state === "hunt" && kind && game.items && game.items[kind];
+  if (it && !it.taken && !eliminated) mk("item", it, "item " + kind, kind === "prey" ? "⚡ BROUILLAGE" : "📡 SUPER GPS");
   for (const id in markers) if (!keep.has(id)) { map.removeLayer(markers[id]); delete markers[id]; }
 }
 function drawZone() {
@@ -135,7 +140,6 @@ function onPos(p) {
   pos = np;
   $("gps").textContent = `📡 GPS OK (±${Math.round(c.accuracy)} m)`;
   $("speed").textContent = Math.round(speedKmh) + " km/h";
-  if (c.heading != null && !isNaN(c.heading)) gpsHeading = c.heading;
   if (follow && !$("game").classList.contains("hidden")) {
     // Zoom initial 18 une seule fois ; ensuite on garde le zoom choisi par le joueur (pincer / double-tap)
     if (!zoomInit) { map.setView([pos.lat, pos.lng], 18); zoomInit = true; } else map.panTo([pos.lat, pos.lng], { animate: true });
@@ -200,7 +204,7 @@ function takePhoto() {
 function updateAvatar() {
   const bg = store.photo ? `url(${store.photo})` : "none";
   $("avatar").style.backgroundImage = bg; $("avatar2").style.backgroundImage = bg;
-  $("btnPhoto").textContent = store.photo ? "📷 Changer ma photo" : "📷 Prendre ma photo (obligatoire)";
+  $("btnPhoto").textContent = store.photo ? "Changer ma photo" : "Prendre ma photo (obligatoire)";
 }
 $("btnPhoto").onclick = takePhoto; $("btnPhoto2").onclick = takePhoto;
 updateAvatar();
@@ -219,7 +223,7 @@ $("btnCreate").onclick = async () => {
   code = genCode();
   await set(gameRef(), {
     host: uid, state: "lobby", center, radius: +$("radius").value,
-    durationMin: +$("duration").value, dispersionMin: +$("dispersion").value || 5, lostSec: +$("lostSec").value, pingMin: +$("pingMin").value, preys: +$("preys").value, created: Date.now()
+    durationMin: +$("duration").value, dispersionMin: +$("dispersion").value || 5, lostSec: +$("lostSec").value, jamMin: +$("jamMin").value || 4, superMin: +$("superMin").value || 3, pingMin: +$("pingMin").value, preys: +$("preys").value, created: Date.now()
   });
   await enter();
 };
@@ -244,7 +248,7 @@ async function enter() {
 }
 function leave() {
   unsub && unsub(); unsub = null; unsubPhotos && unsubPhotos(); unsubPhotos = null; photos = {}; code = null; game = null; players = {}; myRole = null; shownRole = null;
-  eliminated = false; zoneEnd = speedEnd = speedOverSince = null; assigning = false; zoneKey = ""; zoomInit = false; compassShown = false;
+  eliminated = false; zoneEnd = speedEnd = speedOverSince = null; assigning = false; zoneKey = ""; zoomInit = false; degShown = false;
   delete store.code; zoneLayers.forEach(l => map.removeLayer(l)); zoneLayers = [];
   $("overlay").className = "hidden"; show("home"); draw();
 }
@@ -258,12 +262,12 @@ $("btnStart").onclick = () => update(gameRef(), { state: "dispersion", phaseEnd:
 /* ---------- Routage selon l'état de la partie ---------- */
 function resetLocal() { // remise à zéro locale (nouvelle partie / revanche)
   eliminated = false; shownRole = null; assigning = false; zoneEnd = speedEnd = speedOverSince = null;
-  lastPing = -1; lastPush = 0; jamFlushed = 0; zoomInit = false; compassShown = false; $("banner").classList.add("hidden");
+  lastPing = -1; lastPush = 0; jamFlushed = 0; lastSuper = 0; zoomInit = false; degShown = false; $("banner").classList.add("hidden");
 }
 function renderLobby() {
   if (!game || game.state !== "lobby") return;
   $("codeBig").textContent = code;
-  $("lobbyInfo").textContent = `Zone ${game.radius} m · dispersion ${game.dispersionMin || 5} min · traque ${game.durationMin} min · positions toutes les ${game.pingMin} min · ${game.preys} proie(s)`;
+  $("lobbyInfo").textContent = `Zone ${game.radius} m · dispersion ${game.dispersionMin || 5} min · traque ${game.durationMin} min · positions toutes les ${game.pingMin} min · ${game.preys} proie(s) · brouillage ${game.jamMin || 4} min · super GPS ${game.superMin || 3} min`;
   const ul = $("plist"); ul.innerHTML = "";
   Object.entries(players).forEach(([id, p]) => {
     const li = document.createElement("li"), av = document.createElement("span"); av.className = "lav";
@@ -290,7 +294,7 @@ function renderLegend() {
 $("legendBtn").onclick = () => $("legendList").classList.toggle("hidden");
 // Revanche : même joueurs, même réglages, tout le monde repasse au lobby
 function rematch() {
-  const u = { state: "lobby", winner: null, huntEnd: null, phaseEnd: null };
+  const u = { state: "lobby", winner: null, huntEnd: null, phaseEnd: null, items: null, superUntil: null, superBy: null };
   if (!players[game.host]) u.host = uid;
   for (const id in players) {
     for (const k of ["role", "reason", "lat", "lng", "ts", "acc", "ping", "jamUntil", "jamPos", "bonus", "jamsUsed"]) u[`players/${id}/${k}`] = null;
@@ -342,16 +346,57 @@ function checkEnd() {
   if (preys.length && preys.every(p => p.alive === false)) endGame("chasseurs");
   else if (hunters.length && hunters.every(p => p.alive === false)) endGame("proies");
 }
+function randPoint(c, R) { // point aléatoire dans la zone (marge de 25 % avec le bord)
+  const r = R * .75 * Math.sqrt(Math.random()), a = Math.random() * 2 * Math.PI;
+  return { lat: c.lat + r * Math.cos(a) / 111320, lng: c.lng + r * Math.sin(a) / (111320 * Math.cos(c.lat * Math.PI / 180)) };
+}
+// Place les objets loin de l'équipe concernée (≥ ITEM_MIN_M, au plus 60 % du rayon) et loin l'un de l'autre (≥ 50 % du rayon)
+function pickItem(teamPts, other) {
+  const R = game.radius, minD = Math.min(C.ITEM_MIN_M, R * .6), gap = R * .5;
+  let best = null, bs = -1;
+  for (let i = 0; i < 300; i++) {
+    const p = randPoint(game.center, R);
+    const dT = teamPts.length ? Math.min(...teamPts.map(q => dist(p, q))) : Infinity, dO = other ? dist(p, other) : Infinity;
+    if (dT >= minD && dO >= gap) return p;
+    const sc = Math.min(dT / minD, dO / gap); if (sc > bs) { bs = sc; best = p; } // repli : le meilleur candidat
+  }
+  return best;
+}
+function placeItems(ids, np) {
+  const pts = list => list.map(id => players[id]).filter(p => p && p.lat);
+  const prey = pickItem(pts(ids.slice(0, np)), null);
+  return { prey, hunter: pickItem(pts(ids.slice(np)), prey) };
+}
 async function assignRoles() {
   if (assigning) return; assigning = true;
   const ids = Object.keys(players).filter(i => players[i].alive !== false);
   if (ids.length < 2) return update(gameRef(), { state: "ended", winner: "annulée" });
   for (let i = ids.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0;[ids[i], ids[j]] = [ids[j], ids[i]]; }
   const np = Math.min(game.preys || 1, ids.length - 1);
-  const u = { state: "hunt", huntEnd: now() + game.durationMin * 60000 };
+  const u = { state: "hunt", huntEnd: now() + game.durationMin * 60000, superUntil: null,
+    items: placeItems(ids, np) };
   ids.forEach((id, i) => u[`players/${id}/role`] = i < np ? "proie" : "chasseur");
   await update(gameRef(), u);
 }
+
+/* ---------- Objets cachés dans la zone ---------- */
+// Proie : le point débloque 1 brouillage. Chasseurs : le point active le SUPER GPS (proie en direct, pour toute l'équipe).
+async function claimItem(kind) {
+  if (claiming) return; claiming = true;
+  try {
+    const r = await runTransaction(ref(db, `games/${code}/items/${kind}/taken`), cur => cur ? undefined : uid); // un seul gagnant
+    if (!r.committed) return;
+    const me = players[uid] || {};
+    if (kind === "prey") {
+      const used = me.jamsUsed || 0;
+      update(ref(db, `games/${code}/players/${uid}`), { bonus: true, jamsUsed: used >= C.MAX_JAMS ? used - 1 : used });
+      toast("⚡ Objet trouvé : 1 BROUILLAGE GPS débloqué"); beep(1000, .15, 2);
+    } else {
+      update(gameRef(), { superUntil: now() + (game.superMin || 3) * 60000, superBy: me.name || "" });
+    }
+  } finally { claiming = false; }
+}
+function superActive() { return game && game.superUntil > now(); }
 
 /* ---------- Actions : capture, brouillage, proximité ---------- */
 const fresh = p => p.lat && now() - p.ts < C.FRESH_MS;
@@ -363,6 +408,9 @@ function proximity() {
   if (!game || game.state !== "hunt" || !pos || eliminated) return;
   const me = players[uid]; if (!me) return;
   const n = now();
+  const kind = myRole === "proie" ? "prey" : myRole === "chasseur" ? "hunter" : null;
+  const it = kind && game.items && game.items[kind];
+  if (it && !it.taken && Math.max(0, dist(pos, it) - Math.min(pos.acc || 0, 20)) <= C.ITEM_M) claimItem(kind);
   $("btnCapture").classList.toggle("hidden", myRole !== "chasseur");
   $("btnJam").classList.toggle("hidden", myRole !== "proie");
   if (myRole === "chasseur") {
@@ -393,16 +441,31 @@ $("btnCapture").onclick = () => {
   const t = captureTarget && players[captureTarget];
   if (t && t.alive !== false && fresh(t) && effDist(t) <= C.CAPTURE_M + 5) update(ref(db, `games/${code}/players/${captureTarget}`), { alive: false, reason: "Capturé par " + players[uid].name });
 };
-$("btnJam").onclick = () => (players[uid].jamsUsed || 0) < C.MAX_JAMS && update(ref(db, `games/${code}/players/${uid}`), { bonus: false, jamsUsed: (players[uid].jamsUsed || 0) + 1, jamUntil: now() + C.JAM_MS, jamPos: { lat: pos.lat, lng: pos.lng } });
+$("btnJam").onclick = () => (players[uid].jamsUsed || 0) < C.MAX_JAMS && update(ref(db, `games/${code}/players/${uid}`), { bonus: false, jamsUsed: (players[uid].jamsUsed || 0) + 1, jamUntil: now() + (game.jamMin || 4) * 60000, jamPos: { lat: pos.lat, lng: pos.lng } });
 
 /* ---------- Publication des positions ---------- */
 const huntStart = () => game.huntEnd - game.durationMin * 60000;
-const pingIdx = n => Math.floor((n - huntStart()) / (game.pingMin * 60000));
+// Planning des pings (identique chez tous les joueurs). Normal : toutes les pingMin minutes.
+// Pendant les 5 dernières minutes : l'intervalle diminue progressivement jusqu'à MIN_PING_MS.
+let sched = { key: "", times: [] }, degShown = false;
+function pingTimes() {
+  const key = game.huntEnd + "|" + game.pingMin + "|" + game.durationMin;
+  if (sched.key === key) return sched.times;
+  const start = huntStart(), end = game.huntEnd, pm = game.pingMin * 60000, T = C.DEGRESSIVE_MS, MIN = Math.min(C.MIN_PING_MS, pm);
+  const times = []; let t = start;
+  while (t < end) {
+    times.push(t);
+    if (end - t > T) t = Math.min(t + pm, Math.max(t + 1000, end - T)); // un ping tombe exactement à 5 min de la fin
+    else t += Math.max(MIN, Math.min(pm, MIN + (pm - MIN) * ((end - t) / T) ** 2));
+  }
+  sched = { key, times }; return times;
+}
+const pingIdx = n => pingTimes().filter(t => t <= n).length - 1;
 function publish() {
   if (!game || !["dispersion", "hunt"].includes(game.state) || !pos || eliminated) return;
   const n = now(), u = {};
   if (game.state === "dispersion") { // simple battement de cœur (position non affichée)
-    if (n - lastPush >= C.PUSH_MS) { update(ref(db, `games/${code}/players/${uid}`), { ts: n }); lastPush = n; }
+    if (n - lastPush >= C.PUSH_MS) { update(ref(db, `games/${code}/players/${uid}`), { ts: n, lat: pos.lat, lng: pos.lng, acc: Math.round(pos.acc || 0) }); lastPush = n; }
     return;
   }
   if (!myRole) return;
@@ -439,50 +502,6 @@ function checkLost() {
   }
 }
 
-/* ---------- Boussole (chasseurs, 10 dernières minutes) ---------- */
-let compassShown = false, heading = null, lastOrient = 0, lastCompassDraw = 0;
-function bearing(a, b) {
-  const t = Math.PI / 180, y = Math.sin((b.lng - a.lng) * t) * Math.cos(b.lat * t);
-  const x = Math.cos(a.lat * t) * Math.sin(b.lat * t) - Math.sin(a.lat * t) * Math.cos(b.lat * t) * Math.cos((b.lng - a.lng) * t);
-  return (Math.atan2(y, x) / t + 360) % 360;
-}
-function onOrient(e) {
-  let h = null;
-  if (e.webkitCompassHeading != null) h = e.webkitCompassHeading;          // iOS
-  else if (e.absolute && e.alpha != null) h = (360 - e.alpha) % 360;       // Android
-  if (h == null) return;
-  heading = (h + ((screen.orientation && screen.orientation.angle) || 0)) % 360; lastOrient = Date.now();
-  if (Date.now() - lastCompassDraw > 100) updateCompass();
-}
-function initCompass() { // iOS demande une autorisation après un clic
-  const listen = () => { addEventListener("deviceorientationabsolute", onOrient, true); addEventListener("deviceorientation", onOrient, true); };
-  if (typeof DeviceOrientationEvent !== "undefined" && DeviceOrientationEvent.requestPermission)
-    DeviceOrientationEvent.requestPermission().then(r => r === "granted" && listen()).catch(() => {});
-  else listen();
-}
-document.addEventListener("click", initCompass, { once: true });
-function curHeading() {
-  if (heading != null && Date.now() - lastOrient < 3000) return heading;
-  if (gpsHeading != null && speedKmh > 3) return gpsHeading;
-  return null;
-}
-function updateCompass() {
-  lastCompassDraw = Date.now();
-  const el = $("compass");
-  const on = game && game.state === "hunt" && myRole === "chasseur" && !eliminated && pos && game.huntEnd - now() <= C.COMPASS_MS;
-  let best = null, bd = Infinity;
-  if (on) for (const p of Object.values(players)) {
-    if (p.role !== "proie" || p.alive === false || !p.ping) continue;
-    const d = dist(pos, p.ping); if (d < bd) { bd = d; best = p.ping; }
-  }
-  if (!best) { el.classList.add("hidden"); return; }
-  if (!compassShown) { compassShown = true; toast("🧭 Boussole activée : elle pointe vers le dernier ping de la proie"); beep(660, .15, 2); }
-  el.classList.remove("hidden");
-  const h = curHeading();
-  $("compassArrow").style.transform = `rotate(${(bearing(pos, best) - (h || 0) + 360) % 360}deg)`;
-  $("compassTxt").textContent = (bd >= 1000 ? (bd / 1000).toFixed(1) + " km" : Math.round(bd / 10) * 10 + " m") + (h == null ? " · nord ↑" : "");
-}
-
 /* ---------- Boucle principale (1 s) ---------- */
 setInterval(() => {
   if (!game) return;
@@ -492,10 +511,21 @@ setInterval(() => {
     if (r <= 0 && game.host === uid) assignRoles();
   } else if (game.state === "hunt") {
     const r = game.huntEnd - n; $("timer").textContent = fmt(r);
-    $("ping").textContent = fmt(huntStart() + (pingIdx(n) + 1) * game.pingMin * 60000 - n);
+    const nxt = pingTimes().find(t => t > n);
+    $("ping").textContent = nxt ? fmt(nxt - n) : "--:--";
+    if (r <= C.DEGRESSIVE_MS && !degShown) { degShown = true; toast("⚡ 5 dernières minutes : les positions se rafraîchissent de plus en plus vite !"); beep(880, .12, 3); }
+    if (game.superUntil && game.superUntil !== lastSuper && game.superUntil > n) {
+      lastSuper = game.superUntil;
+      toast(myRole === "chasseur" ? `📡 SUPER GPS ! La proie est visible en direct pendant ${game.superMin || 3} min` : `⚠️ Les chasseurs ont un SUPER GPS pendant ${game.superMin || 3} min`);
+      beep(myRole === "chasseur" ? 1000 : 300, .2, 3);
+    }
+    const sb = $("badge"), on = game.superUntil > n;
+    sb.classList.toggle("hidden", !on);
+    if (on) sb.textContent = (myRole === "chasseur" ? "📡 SUPER GPS " : "⚠️ SUPER GPS ENNEMI ") + fmt(game.superUntil - n);
     if (r <= 0) endGame("proies");
   }
-  rules(); proximity(); publish(); checkLost(); updateCompass(); draw();
+  rules(); proximity(); publish(); checkLost(); draw();
+
 }, 1000);
 
 /* ---------- Démarrage ---------- */
